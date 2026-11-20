@@ -18,6 +18,7 @@
   <div class="bar">
     <b>英文課筆記本</b>
     <span id="status"></span>
+    <button id="toggleRight" type="button" aria-expanded="true" title="收合右側 AI 欄">收合 AI</button>
     <button id="btnExp">匯出</button>
     <button id="btnBackup">備份 JSON</button>
     <button id="btnImp">匯入</button>
@@ -31,6 +32,8 @@
     <div class="search"><input id="q" type="search" placeholder="搜尋收藏內容"></div>
     <div id="list"></div>
   </section>
+
+  <div id="splitter" role="separator" aria-label="調整左右欄寬度" aria-orientation="vertical" aria-valuemin="240" aria-valuenow="" aria-valuemax="" tabindex="0" title="拖曳調整左右欄寬度；方向鍵也可調整"></div>
 
   <section id="right">
     <div class="pane">
@@ -70,6 +73,59 @@ const ls = {
 let items = ls.get('enNotes', []);
 let cur = 'all', hist = [];
 let backendReady = Promise.resolve(false), saveQueue = Promise.resolve();
+
+/* ---------- 左右欄調整 ---------- */
+const splitter = $('splitter'), main = document.querySelector('main');
+let leftWidth = Number(ls.get('enNotesLeftWidth', 0)) || 0;
+function setLeftWidth(width){
+  const max = Math.max(240, main.clientWidth - 300);
+  leftWidth = Math.max(240, Math.min(Math.round(width), max));
+  main.style.gridTemplateColumns = `${leftWidth}px 10px minmax(280px, 1fr)`;
+  splitter.setAttribute('aria-valuenow', leftWidth);
+  splitter.setAttribute('aria-valuemax', max);
+  ls.set('enNotesLeftWidth', leftWidth);
+}
+function setRightCollapsed(collapsed){
+  main.classList.toggle('right-collapsed', collapsed);
+  updateColumns();
+  $('toggleRight').textContent = collapsed ? '展開 AI' : '收合 AI';
+  $('toggleRight').title = collapsed ? '展開右側 AI 欄' : '收合右側 AI 欄';
+  $('toggleRight').setAttribute('aria-expanded', String(!collapsed));
+  ls.set('enNotesRightCollapsed', collapsed);
+}
+function updateColumns(){
+  if(main.classList.contains('right-collapsed')){
+    main.style.gridTemplateColumns = 'minmax(0,1fr) 0 0';
+  }else{
+    main.style.gridTemplateColumns = `${leftWidth || Math.round(main.clientWidth * .62)}px 10px minmax(280px,1fr)`;
+  }
+}
+splitter.addEventListener('pointerdown', e => {
+  if(window.matchMedia('(max-width: 820px)').matches) return;
+  splitter.setPointerCapture(e.pointerId);
+  const move = ev => setLeftWidth(ev.clientX - main.getBoundingClientRect().left);
+  const stop = () => {
+    splitter.removeEventListener('pointermove', move);
+    splitter.removeEventListener('pointerup', stop);
+    splitter.removeEventListener('pointercancel', stop);
+  };
+  splitter.addEventListener('pointermove', move);
+  splitter.addEventListener('pointerup', stop);
+  splitter.addEventListener('pointercancel', stop);
+  e.preventDefault();
+});
+splitter.addEventListener('keydown', e => {
+  if(e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
+    e.preventDefault();
+    setLeftWidth((leftWidth || Math.round(main.clientWidth * .58)) + (e.key === 'ArrowRight' ? 24 : -24));
+  }
+  if(e.key === 'Home'){ e.preventDefault(); setLeftWidth(240) }
+  if(e.key === 'End'){ e.preventDefault(); setLeftWidth(main.clientWidth - 300) }
+});
+ $('toggleRight').onclick = () => setRightCollapsed(!main.classList.contains('right-collapsed'));
+if(ls.get('enNotesRightCollapsed', false)) setRightCollapsed(true);
+else setLeftWidth(leftWidth || Math.round(main.clientWidth * .62));
+window.addEventListener('resize', () => { if(leftWidth && !main.classList.contains('right-collapsed') && !window.matchMedia('(max-width: 820px)').matches) setLeftWidth(leftWidth) });
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const say = t => { $('status').textContent = t };
