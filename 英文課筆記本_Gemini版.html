@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>英文課筆記本</title>
+<link rel="stylesheet" href="英文課筆記本_Gemini版.css">
+</head>
+<body>
+<header>
+  <div class="top">
+    <textarea id="src" placeholder="貼上整份課堂筆記，按「AI 分類存入」，內容會自動分到下方的單字／文法／片語／句型"></textarea>
+    <div class="acts">
+      <button class="pri" id="btnAI">AI 分類存入</button>
+      <button id="btnLocal" title="不用 API Key，依表情符號格式解析">快速解析</button>
+    </div>
+  </div>
+  <div class="bar">
+    <b>英文課筆記本</b>
+    <span id="status"></span>
+    <button id="btnExp">匯出</button>
+    <button id="btnImp">匯入</button>
+    <input type="file" id="file" accept=".json" hidden>
+  </div>
+</header>
+
+<main>
+  <section id="left">
+    <div class="tabs" id="tabs"></div>
+    <div class="search"><input id="q" type="search" placeholder="搜尋收藏內容"></div>
+    <div id="list"></div>
+  </section>
+
+  <section id="right">
+    <div class="pane">
+      <h3>AI 翻譯</h3>
+      <textarea id="tin" rows="3" placeholder="輸入或從左側點「翻譯」"></textarea>
+      <div class="row">
+        <select id="tl" style="width:auto"><option value="zh-TW">→ 繁體中文</option><option value="en">→ English</option></select>
+        <button class="pri" id="btnTr">翻譯</button>
+      </div>
+      <div id="tout"></div>
+    </div>
+    <div class="pane" id="chatpane">
+      <h3>Gemini 英文助教</h3>
+      <div id="msgs"></div>
+      <div class="row">
+        <input id="cin" placeholder="問文法、造句、用法…">
+        <button class="pri" id="btnSend">送出</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const CATS = {
+  vocab:{n:'單字',c:'var(--c-vocab)'}, grammar:{n:'文法',c:'var(--c-grammar)'},
+  phrase:{n:'片語',c:'var(--c-phrase)'}, pattern:{n:'句型',c:'var(--c-pattern)'},
+  trans:{n:'翻譯紀錄',c:'var(--c-trans)'}, ask:{n:'AI 詢問紀錄',c:'var(--c-ask)'}
+};
+const NOTE = ['vocab','grammar','phrase','pattern'];
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const today = () => new Date().toISOString().slice(0,10);
+const ls = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d }catch{ return d } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch{} }
+};
+let items = ls.get('enNotes', []);
+let cur = 'all', hist = [];
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const say = t => { $('status').textContent = t };
+const save = () => ls.set('enNotes', items);
+
+/* ---------- 左側收藏區 ---------- */
+function render(){
+  const cnt = {all:items.filter(i => NOTE.includes(i.cat)).length};
+  for(const k in CATS) cnt[k] = items.filter(i => i.cat === k).length;
+  $('tabs').innerHTML = [['all','全部'], ...Object.entries(CATS).map(([k,v]) => [k,v.n])].map(([k,n]) =>
+    `<button class="tab${cur===k?' on':''}${k==='trans'?' gap':''}" data-k="${k}" style="--tc:${CATS[k]?.c||'var(--acc)'}">${n}<small>${cnt[k]}</small></button>`).join('');
+  const q = $('q').value.trim().toLowerCase();
+  const rows = items.filter(i => (cur==='all' ? NOTE.includes(i.cat) : i.cat===cur) &&
+    (!q || (i.en+i.zh+i.extra).toLowerCase().includes(q))).reverse();
+  $('list').innerHTML = rows.length ? rows.map(i => {
+    const c = CATS[i.cat];
+    const ex = i.extra ? `<div class="ex${i.cat==='grammar'?'':' pr'}">${esc(i.extra)}</div>` : '';
+    const ops = i.cat==='trans' ? '<button data-a="tr">載入翻譯框</button>'
+      : i.cat==='ask' ? '<button data-a="ai2">再問一次</button>'
+      : '<button data-a="tr">翻譯</button><button data-a="ai">問 AI</button>';
+    return `<div class="item${i.cat==='ask'?' long':''}" style="--tc:${c.c}" data-id="${i.id}">
+      <div class="tg">${c.n}${NOTE.includes(i.cat)?'':' · '+esc(i.date)}</div><div class="en">${esc(i.en)}</div>${ex}
+      <div class="zh">${esc(i.zh)}</div>
+      <div class="op">${ops}<button data-a="del">刪除</button></div></div>`;
+  }).join('') : '<div class="empty">還沒有內容，從上方貼上筆記開始。</div>';
+}
+$('tabs').onclick = e => { const k = e.target.closest('.tab')?.dataset.k; if(k){ cur = k; render() } };
+$('q').oninput = render;
+$('list').onclick = e => {
+  const b = e.target.closest('button'); if(!b) return;
+  const id = b.closest('.item').dataset.id, it = items.find(i => i.id === id);
+  if(b.dataset.a === 'del'){ items = items.filter(i => i.id !== id); save(); render() }
+  if(b.dataset.a === 'tr'){
+    for(const o of $('tl').options) if(o.text === it.extra) $('tl').value = o.value;
+    $('tin').value = it.en; translate();
+  }
+  if(b.dataset.a === 'ai2'){ $('cin').value = it.en; chat() }
+  if(b.dataset.a === 'ai'){ $('cin').value = `請用繁體中文解釋「${it.en}」的用法，並舉 3 個例句。`; chat() }
+};
+
+function addItems(arr, any){
+  let n = 0;
+  const seen = new Set(items.map(i => i.cat + '|' + i.en.toLowerCase()));
+  for(const r of arr){
+    if(!CATS[r.cat] || !r.en || (!any && !NOTE.includes(r.cat))) continue;
+    const key = r.cat + '|' + String(r.en).trim().toLowerCase();
+    if(seen.has(key)) continue;
+    seen.add(key);
+    items.push({id: uid(), cat:r.cat,
+      en:String(r.en).trim(), zh:String(r.zh||'').trim(), extra:String(r.extra||'').trim(),
+      date:r.date || today()});
+    n++;
+  }
+  save(); render(); return n;
+}
+
+/* ---------- Gemini API（透過本機 Python 後端，API Key 不放在前端） ---------- */
+async function gem(contents, system){
+  const response = await fetch('/api/gem', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents, system })
+  });
+
+  let data = {};
+  try { data = await response.json(); } catch {}
+
+  if (!response.ok) {
+    throw new Error(data.error || `Gemini API 錯誤（HTTP ${response.status}）`);
+  }
+  if (typeof data.text !== 'string') {
+    throw new Error('伺服器沒有回傳有效的 AI 文字結果');
+  }
+  return data.text;
+}
+
+const CLASSIFY = `你是英文課筆記整理助手。把使用者貼上的課堂筆記拆成條目，只回傳 JSON 陣列，每個元素為 {"cat","en","zh","extra"}。
+cat 只能是：
+- vocab：單一單字。en=單字，zh=繁體中文意思，extra=詞性與發音（筆記有就填）。
+- phrase：兩個字以上的片語、慣用語、口語表達。en=片語，zh=繁體中文意思，extra=可空。
+- grammar：句子訂正。en=正確句子，extra=原本錯誤的句子，zh=繁體中文簡短說明錯在哪。
+- sentence pattern 請用 pattern：句型或文法規則。en=句型或規則，zh=繁體中文說明，extra=可空。
+發音練習併入對應單字的 extra。忽略老師評語、上課時間、問候語。不要重複。`;
+
+$('btnAI').onclick = async () => {
+  const t = $('src').value.trim(); if(!t) return say('請先貼上筆記');
+  $('btnAI').disabled = true; say('AI 分類中…');
+  try{
+    const out = await gem([{role:'user', parts:[{text:t}]}], CLASSIFY);
+    const arr = JSON.parse(out.match(/\[[\s\S]*\]/)[0]);
+    const n = addItems(Array.isArray(arr) ? arr : []);
+    say(`已新增 ${n} 筆`); $('src').value = '';
+  }catch(e){ say('失敗：' + e.message) }
+  $('btnAI').disabled = false;
+};
+
+/* ---------- 免 AI 快速解析（依表情符號格式） ---------- */
+$('btnLocal').onclick = () => {
+  const lines = $('src').value.split(/\n/).map(s => s.replace(/[\u200e\u200f]/g,'').trim()).filter(Boolean);
+  const out = []; let wrong = '';
+  const pron = {};
+  for(const l of lines){
+    let m;
+    if(m = l.match(/^📣\s*(.+?)\s*(?:\(.*?\))?\s*(\/.+\/|[–-]\s*.+)$/)) pron[m[1].toLowerCase()] = m[2].replace(/^[–-]\s*/,'');
+    else if(m = l.match(/^📢\s*(.+?)\s*[–-]\s*(.+)$/)) pron[m[1].toLowerCase()] = m[2];
+  }
+  for(const l of lines){
+    let m;
+    if(m = l.match(/^🟣\s*(.+?)\s*\(([^)]+)\)\s*(.*)$/)){
+      const w = m[1].trim(), isPh = /phrase/i.test(m[2]) || /\s/.test(w);
+      out.push({cat:isPh?'phrase':'vocab', en:w, zh:m[3], extra:(m[2] + ' ' + (pron[w.toLowerCase()]||'')).trim()});
+    }else if(m = l.match(/^💡\s*(.+)$/)){
+      const w = m[1].trim();
+      out.push({cat:/\s/.test(w)?'phrase':'vocab', en:w, zh:'', extra:pron[w.toLowerCase()]||''});
+    }else if(l.startsWith('❌')) wrong = l.replace(/^❌\s*/,'');
+    else if(l.startsWith('✔️') || l.startsWith('✔')){
+      const r = l.replace(/^✔️?\s*/,'');
+      if(wrong){ out.push({cat:'grammar', en:r, zh:'', extra:wrong}); wrong = '' }
+    }else if(m = l.match(/^📌\s*(.+)$/)) out.push({cat:'pattern', en:m[1], zh:'', extra:''});
+  }
+  say(`已新增 ${addItems(out)} 筆（快速解析不含中文翻譯，可點「翻譯」補）`);
+  $('src').value = '';
+};
+
+/* ---------- Google 翻譯 ---------- */
+async function translate(){
+  const q = $('tin').value.trim(); if(!q) return;
+  $('tout').textContent = '翻譯中…';
+  try{
+    const lang = $('tl').value === 'en' ? 'English' : '繁體中文';
+    const out = (await gem([{role:'user', parts:[{text:`請把以下文字翻譯成${lang}，只輸出譯文，不要任何說明：\n\n${q}`}]}])).trim();
+    $('tout').textContent = out;
+    const lab = $('tl').selectedOptions[0].text.trim();
+    const old = items.find(i => i.cat==='trans' && i.en===q && i.extra===lab);
+    if(old){ old.zh = out; old.date = today() } else items.push({id:uid(), cat:'trans', en:q, zh:out, extra:lab, date:today()});
+    save(); render();
+  }catch(e){ $('tout').textContent = '翻譯失敗：' + e.message }
+}
+$('btnTr').onclick = translate;
+
+/* ---------- Gemini 對話 ---------- */
+const TUTOR = '你是親切的英文家教，學生母語是繁體中文。用繁體中文解釋，英文例句附中文翻譯，回答簡潔。';
+function bubble(t, who){
+  const d = document.createElement('div'); d.className = 'm ' + who; d.textContent = t;
+  $('msgs').appendChild(d); $('msgs').scrollTop = 1e9; return d;
+}
+async function chat(){
+  const t = $('cin').value.trim(); if(!t) return;
+  $('cin').value = ''; bubble(t, 'u'); hist.push({role:'user', parts:[{text:t}]});
+  const w = bubble('…', 'a');
+  try{
+    const a = await gem(hist.slice(-12), TUTOR);
+    w.textContent = a; hist.push({role:'model', parts:[{text:a}]});
+    items.push({id:uid(), cat:'ask', en:t, zh:a, extra:'', date:today()}); save(); render();
+  }catch(e){ w.textContent = '失敗：' + e.message; hist.pop() }
+}
+$('btnSend').onclick = chat;
+$('cin').onkeydown = e => { if(e.key === 'Enter' && !e.isComposing) chat() };
+$('tin').onkeydown = e => { if(e.key === 'Enter' && (e.ctrlKey||e.metaKey)) translate() };
+
+/* ---------- 設定、匯出入 ---------- */
+$('btnExp').onclick = () => {
+  const exportNotes = async () => {
+    $('btnExp').disabled = true;
+    say('正在準備 Excel 檔…');
+    try{
+      // SheetJS 只在使用匯出功能時載入，避免影響平常開啟筆記本。
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+      const wb = XLSX.utils.book_new();
+      const sheets = [
+        ['vocab', '單字'], ['grammar', '文法'], ['phrase', '片語'],
+        ['pattern', '句型'], ['trans', '翻譯紀錄'], ['ask', 'AI詢問紀錄']
+      ];
+      for(const [cat, title] of sheets){
+        const rows = items.filter(i => i.cat === cat).map(i => [i.en || '', i.zh || '', i.extra || '', i.date || '']);
+        const ws = XLSX.utils.aoa_to_sheet([['英文／內容', '中文／說明', '備註／原句', '日期'], ...rows]);
+        ws['!cols'] = [{wch:32}, {wch:42}, {wch:42}, {wch:14}];
+        if(rows.length) ws['!autofilter'] = {ref: `A1:D${rows.length + 1}`};
+        XLSX.utils.book_append_sheet(wb, ws, title);
+      }
+      XLSX.writeFile(wb, `英文課筆記-${today()}.xlsx`);
+      say('Excel 檔已匯出');
+    }catch(e){ say('匯出失敗：' + (e.message || '無法載入 Excel 匯出功能')) }
+    finally{ $('btnExp').disabled = false }
+  };
+  exportNotes();
+};
+$('btnImp').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  try{ say(`匯入 ${addItems(JSON.parse(await e.target.files[0].text()), true)} 筆`) }catch{ say('檔案格式不正確') }
+  e.target.value = '';
+};
+
+render();
+</script>
+</body>
+</html>

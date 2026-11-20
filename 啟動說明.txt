@@ -1,0 +1,35 @@
+英文課筆記本 Gemini 版｜快速啟動
+
+檔案：
+- 英文課筆記本_Gemini版.html：已接上本機 API 的網頁
+- server_gemini.py：本機 Python 後端，安全保管 API Key
+
+第一次使用：
+1. 到 https://aistudio.google.com/app/apikey 建立 Gemini API Key。
+2. 把 ZIP 解壓縮；確認 HTML 和 server_gemini.py 在同一個資料夾。
+3. 在 Mac 開啟「終端機」(Terminal)。
+4. 用 cd 指令切換到解壓縮後的資料夾。例如若資料夾在下載項目：
+   cd ~/Downloads/英文課筆記本_Gemini串接檔案
+   （若資料夾名稱或位置不同，請改成實際位置；也可以先輸入 cd 後空一格，再把資料夾拖進終端機，按 Enter。）
+5. 執行：
+   python3 server_gemini.py
+6. 終端機要求輸入 API Key 時，貼上金鑰後按 Enter。
+   輸入時畫面不會顯示字元，這是正常的。
+7. 瀏覽器開啟：
+   http://127.0.0.1:8000/英文課筆記本_Gemini版.html
+
+日常使用：
+- 先啟動 Terminal 中的 python3 server_gemini.py
+- 再用瀏覽器開啟上面的網址
+- 關閉伺服器時回到 Terminal 按 Ctrl + C
+
+第一次切換前備份舊筆記：
+- 先用原本開啟方式打開舊 HTML，按「匯出」下載 JSON。
+- 新版改用 localhost 網址後，瀏覽器會把它視為不同網站來源，舊 localStorage 不會自動出現。
+- 新版開啟後按「匯入」，選擇剛才匯出的 JSON，即可搬回舊筆記。
+
+注意：
+- 不要把 API Key 貼進 HTML。
+- 這個版本只提供本機使用，伺服器只監聽 127.0.0.1。
+- 網頁資料目前仍存在瀏覽器 localStorage；清除瀏覽器資料或換瀏覽器可能導致筆記消失，請定期使用網頁的「匯出」備份。
+- 若出現模型不存在或不支援錯誤，請回報錯誤文字，以便調整模型名稱。
