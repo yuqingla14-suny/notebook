@@ -7,6 +7,8 @@ import os
 import getpass
 import urllib.request
 import urllib.error
+import sqlite3
+import threading
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
@@ -17,15 +19,63 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:g
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
-    API_KEY = getpass.getpass("請貼上 Gemini API Key（輸入時不會顯示）：").strip()
+    API_KEY = getpass.getpass("請貼上 Gemini API Key（直接按 Enter 可略過）：").strip()
 
-if not API_KEY:
-    raise SystemExit("沒有輸入 API Key，伺服器已停止。")
+DB_PATH = Path(__file__).resolve().with_name("notes.sqlite3")
+DB_LOCK = threading.Lock()
+
+def init_db():
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            data TEXT NOT NULL
+        )""")
+
+def read_notes():
+    with DB_LOCK, sqlite3.connect(DB_PATH) as db:
+        return [json.loads(row[0]) for row in db.execute("SELECT data FROM notes ORDER BY rowid")]
 
 class Handler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/api/notes":
+            self.send_json(200, {"notes": read_notes()})
+            return
+        super().do_GET()
+
+    def do_PUT(self):
+        if self.path != "/api/notes":
+            self.send_json(404, {"error": "找不到這個 API 路徑"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 10_000_000:
+                self.send_json(413, {"error": "筆記資料為空或超過 10 MB"})
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            notes = payload.get("notes") if isinstance(payload, dict) else None
+            if not isinstance(notes, list) or len(notes) > 100_000:
+                self.send_json(400, {"error": "筆記資料格式不正確"})
+                return
+            with DB_LOCK, sqlite3.connect(DB_PATH) as db:
+                db.execute("DELETE FROM notes")
+                db.executemany(
+                    "INSERT INTO notes (id, data) VALUES (?, ?)",
+                    [(str(note["id"]), json.dumps(note, ensure_ascii=False))
+                     for note in notes if isinstance(note, dict) and note.get("id")]
+                )
+            self.send_json(200, {"ok": True})
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError, TypeError):
+            self.send_json(400, {"error": "筆記資料格式不正確"})
+        except Exception as e:
+            self.send_json(500, {"error": f"儲存筆記失敗：{e}"})
+
     def do_POST(self):
         if self.path != "/api/gem":
             self.send_json(404, {"error": "找不到這個 API 路徑"})
+            return
+
+        if not API_KEY:
+            self.send_json(503, {"error": "尚未設定 Gemini API Key；筆記保存功能仍可正常使用"})
             return
 
         try:
@@ -131,6 +181,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.chdir(Path(__file__).resolve().parent)
+    init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"英文課筆記本已啟動：http://{HOST}:{PORT}/英文課筆記本_Gemini版.html")
     print("請保持這個終端機視窗開啟；按 Ctrl + C 可停止。")

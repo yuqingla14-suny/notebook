@@ -19,6 +19,7 @@
     <b>英文課筆記本</b>
     <span id="status"></span>
     <button id="btnExp">匯出</button>
+    <button id="btnBackup">備份 JSON</button>
     <button id="btnImp">匯入</button>
     <input type="file" id="file" accept=".json" hidden>
   </div>
@@ -68,10 +69,45 @@ const ls = {
 };
 let items = ls.get('enNotes', []);
 let cur = 'all', hist = [];
+let backendReady = Promise.resolve(false), saveQueue = Promise.resolve();
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const say = t => { $('status').textContent = t };
-const save = () => ls.set('enNotes', items);
+const save = () => {
+  ls.set('enNotes', items);
+  const snapshot = JSON.stringify(items);
+  saveQueue = saveQueue.then(async () => {
+    if(!await backendReady) return;
+    const response = await fetch('/api/notes', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({notes:JSON.parse(snapshot)})});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    say('已儲存');
+  }).catch(() => say('後端儲存失敗；資料目前只在此瀏覽器，請確認伺服器仍在執行'));
+};
+
+async function loadNotes(){
+  const controls = ['btnAI','btnLocal','btnImp','btnExp','btnBackup'];
+  controls.forEach(id => $(id).disabled = true);
+  say('正在載入筆記…');
+  try{
+    const response = await fetch('/api/notes');
+    if(!response.ok) throw new Error('後端未提供筆記 API');
+    const data = await response.json();
+    if(!Array.isArray(data.notes)) throw new Error('筆記資料格式不正確');
+    if(data.notes.length){ items = data.notes; ls.set('enNotes', items); }
+    else if(items.length){
+      const migration = await fetch('/api/notes', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({notes:items})});
+      if(!migration.ok) throw new Error('無法匯入瀏覽器中既有的筆記');
+    }
+    backendReady = Promise.resolve(true);
+    say('筆記已載入並由本機資料庫保存');
+  }catch{
+    backendReady = Promise.resolve(false);
+    say('使用瀏覽器儲存（啟動本機伺服器可改用資料庫保存）');
+  }finally{
+    controls.forEach(id => $(id).disabled = false);
+    render();
+  }
+}
 
 /* ---------- 左側收藏區 ---------- */
 function render(){
@@ -126,16 +162,22 @@ function addItems(arr, any){
 
 /* ---------- Gemini API（透過本機 Python 後端，API Key 不放在前端） ---------- */
 async function gem(contents, system){
-  const response = await fetch('/api/gem', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents, system })
-  });
+  let response;
+  try{
+    response = await fetch('/api/gem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents, system })
+    });
+  }catch{
+    throw new Error('連不到 Gemini 後端。請先執行 python3 server_gemini.py，並從 http://127.0.0.1:8000 開啟筆記本；GitHub Pages 網址沒有 API 後端。');
+  }
 
   let data = {};
   try { data = await response.json(); } catch {}
 
   if (!response.ok) {
+    if(response.status === 404) throw new Error('找不到 /api/gem。若目前網址是 GitHub Pages，請改用本機伺服器網址 http://127.0.0.1:8000/英文課筆記本_Gemini版.html。');
     throw new Error(data.error || `Gemini API 錯誤（HTTP ${response.status}）`);
   }
   if (typeof data.text !== 'string') {
@@ -256,12 +298,21 @@ $('btnExp').onclick = () => {
   exportNotes();
 };
 $('btnImp').onclick = () => $('file').click();
+$('btnBackup').onclick = () => {
+  const blob = new Blob([JSON.stringify(items, null, 2)], {type:'application/json'});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `英文課筆記備份-${today()}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  say('JSON 備份已下載');
+};
 $('file').onchange = async e => {
   try{ say(`匯入 ${addItems(JSON.parse(await e.target.files[0].text()), true)} 筆`) }catch{ say('檔案格式不正確') }
   e.target.value = '';
 };
 
-render();
+loadNotes();
 </script>
 </body>
 </html>
