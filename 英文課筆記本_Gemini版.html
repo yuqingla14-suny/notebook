@@ -37,13 +37,15 @@
 
   <section id="right">
     <div class="pane">
-      <h3>AI 翻譯</h3>
-      <textarea id="tin" rows="3" placeholder="輸入或從左側點「翻譯」"></textarea>
+      <h3>Google 翻譯</h3>
+      <textarea id="tin" rows="3" placeholder="輸入要翻譯的文字"></textarea>
       <div class="row">
         <select id="tl" style="width:auto"><option value="zh-TW">→ 繁體中文</option><option value="en">→ English</option></select>
-        <button class="pri" id="btnTr">翻譯</button>
+        <button class="pri" id="btnTr">開啟 Google 翻譯</button>
       </div>
-      <div id="tout"></div>
+      <a id="translateLink" hidden target="_blank" rel="noopener noreferrer">前往 Google 翻譯</a>
+      <textarea id="tout" rows="3" placeholder="從 Google 翻譯複製譯文，再貼到這裡"></textarea>
+      <button id="btnSaveTranslation" type="button">儲存翻譯紀錄</button>
     </div>
     <div class="pane" id="chatpane">
       <h3>Gemini 英文助教</h3>
@@ -290,21 +292,28 @@ $('btnLocal').onclick = () => {
   $('src').value = '';
 };
 
-/* ---------- Google 翻譯 ---------- */
-async function translate(){
+/* ---------- Google 翻譯網站（手動複製譯文回來） ---------- */
+function translate(){
   const q = $('tin').value.trim(); if(!q) return;
-  $('tout').textContent = '翻譯中…';
-  try{
-    const lang = $('tl').value === 'en' ? 'English' : '繁體中文';
-    const out = (await gem([{role:'user', parts:[{text:`請把以下文字翻譯成${lang}，只輸出譯文，不要任何說明：\n\n${q}`}]}])).trim();
-    $('tout').textContent = out;
-    const lab = $('tl').selectedOptions[0].text.trim();
-    const old = items.find(i => i.cat==='trans' && i.en===q && i.extra===lab);
-    if(old){ old.zh = out; old.date = today() } else items.push({id:uid(), cat:'trans', en:q, zh:out, extra:lab, date:today()});
-    save(); render();
-  }catch(e){ $('tout').textContent = '翻譯失敗：' + e.message }
+  const url = new URL('https://translate.google.com/');
+  url.search = new URLSearchParams({sl:'auto', tl:$('tl').value, text:q, op:'translate'}).toString();
+  const fallback = $('translateLink');
+  fallback.href = url.href;
+  const tab = window.open(url.href, '_blank');
+  if(tab){ tab.opener = null; fallback.hidden = true; say('Google 翻譯已在新分頁開啟'); }
+  else{ fallback.hidden = false; say('瀏覽器擋住了新分頁，請點「前往 Google 翻譯」'); }
+  $('tout').placeholder = 'Google 翻譯已在新分頁開啟；複製譯文後貼在這裡。';
 }
 $('btnTr').onclick = translate;
+$('btnSaveTranslation').onclick = () => {
+  const q = $('tin').value.trim(), out = $('tout').value.trim();
+  if(!q || !out){ say('請先輸入原文，並貼上 Google 翻譯結果'); return }
+  const lab = $('tl').selectedOptions[0].text.trim();
+  const old = items.find(i => i.cat==='trans' && i.en===q && i.extra===lab);
+  if(old){ old.zh = out; old.date = today() }
+  else items.push({id:uid(), cat:'trans', en:q, zh:out, extra:lab, date:today()});
+  save(); render(); say('翻譯紀錄已儲存');
+};
 
 /* ---------- Gemini 對話 ---------- */
 const TUTOR = '你是親切的英文家教，學生母語是繁體中文。用繁體中文解釋，英文例句附中文翻譯，回答簡潔。';
